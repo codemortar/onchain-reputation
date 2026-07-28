@@ -105,6 +105,38 @@ describe("scoreComponents", () => {
     const profile = buildProfile(summary(), NOW);
     expect(profile.score).toBe(0);
   });
+
+  it("measures the verified share over checked deployments only", () => {
+    // One verified, one checked-and-unverified, one never checked. The unknown
+    // must not drag the ratio down to 1/3 — the answer is 1/2.
+    const components = scoreComponents(
+      summary({
+        deployments: [
+          deployment({ verified: true }),
+          deployment({ address: "0xaaaa2", verified: false }),
+          deployment({ address: "0xaaaa3", verified: null }),
+        ],
+      }),
+    );
+    const ratio = components.find((c) => c.key === "verifiedRatio");
+    expect(ratio?.raw).toBeCloseTo(0.5);
+  });
+
+  it("skips the verified signal when every deployment went unchecked", () => {
+    const components = scoreComponents(
+      summary({ deployments: [deployment({ verified: null })] }),
+    );
+    expect(components.map((c) => c.key)).not.toContain("verifiedRatio");
+    // And the remaining weights still reach a perfect score.
+    expect(components.reduce((sum, c) => sum + c.weight, 0)).toBeCloseTo(1);
+  });
+
+  it("still counts an unchecked deployment as a deployment", () => {
+    const components = scoreComponents(
+      summary({ deployments: [deployment({ verified: null })] }),
+    );
+    expect(components.find((c) => c.key === "deployments")?.raw).toBe(1);
+  });
 });
 
 describe("caveats", () => {
@@ -153,5 +185,18 @@ describe("caveats", () => {
   it("admits when the explorer truncated the history", () => {
     const keys = caveats(summary({ truncated: true }), NOW).map((c) => c.key);
     expect(keys).toContain("truncated");
+  });
+
+  it("admits when some deployments went unchecked", () => {
+    const keys = caveats(
+      summary({ deployments: [deployment(), deployment({ verified: null })] }),
+      NOW,
+    ).map((c) => c.key);
+    expect(keys).toContain("partialVerification");
+  });
+
+  it("stays quiet about verification when everything was checked", () => {
+    const keys = caveats(summary({ deployments: [deployment()] }), NOW).map((c) => c.key);
+    expect(keys).not.toContain("partialVerification");
   });
 });

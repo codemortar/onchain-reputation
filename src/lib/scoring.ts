@@ -68,12 +68,17 @@ export const SIGNALS: SignalSpec[] = [
       "Share of deployed contracts whose source is verified on the explorer. " +
       "Publishing source is a deliberate act and a reasonable proxy for work " +
       "meant to be used by others.",
-    raw: (s) =>
-      s.deployments.length === 0
+    // Measured over the contracts actually checked. Deployments past the
+    // verification cap have an unknown status, and counting unknown as
+    // unverified would penalise the busiest addresses for our own shortcut.
+    raw: (s) => {
+      const checked = s.deployments.filter((d) => d.verified !== null);
+      return checked.length === 0
         ? 0
-        : s.deployments.filter((d) => d.verified).length / s.deployments.length,
-    // Meaningless with nothing deployed: skipped rather than scored as zero.
-    available: (s) => s.deployments.length > 0,
+        : checked.filter((d) => d.verified).length / checked.length;
+    },
+    // Meaningless with nothing checked: skipped rather than scored as zero.
+    available: (s) => s.deployments.some((d) => d.verified !== null),
   },
   {
     key: "activeMonths",
@@ -186,6 +191,16 @@ export function caveats(summary: ActivitySummary, now: Date = new Date()): Cavea
       message:
         "Less than three months of history. Too little to distinguish a new " +
         "developer from a throwaway address.",
+    });
+  }
+
+  const unchecked = summary.deployments.filter((d) => d.verified === null).length;
+  if (unchecked > 0) {
+    out.push({
+      key: "partialVerification",
+      message:
+        `${unchecked} deployment(s) were not checked for published source, so ` +
+        "the verified-source share is measured over a sample rather than all of them.",
     });
   }
 

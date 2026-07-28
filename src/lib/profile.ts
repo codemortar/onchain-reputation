@@ -7,7 +7,7 @@
  * degrades to "no name" instead of taking the whole profile down with it.
  */
 
-import { createPublicClient, http, isAddress, type Address } from "viem";
+import { createPublicClient, getAddress, http, isAddress, type Address } from "viem";
 import { mainnet } from "viem/chains";
 import { normalize } from "viem/ens";
 
@@ -31,7 +31,10 @@ export class InvalidAddressError extends Error {}
 /** Accept either a hex address or an ENS name, returning a checksummed address. */
 export async function resolveInput(input: string): Promise<Address> {
   const trimmed = input.trim();
-  if (isAddress(trimmed)) return trimmed as Address;
+  // isAddress accepts any case, so checksum it rather than passing the input
+  // through untouched — the return type says checksummed and callers may rely
+  // on it, even though everything downstream here lowercases anyway.
+  if (isAddress(trimmed)) return getAddress(trimmed);
 
   if (trimmed.includes(".")) {
     const resolved = await client.getEnsAddress({ name: normalize(trimmed) });

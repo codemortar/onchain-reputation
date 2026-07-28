@@ -96,9 +96,11 @@ function ProfileView({ profile }: { profile: Profile }) {
                     d.verified ? "text-green-700 dark:text-green-500" : "text-neutral-500"
                   }
                 >
-                  {d.verified
-                    ? `verified${d.name ? ` · ${d.name}` : ""}`
-                    : "source not published"}
+                  {d.verified === null
+                    ? "source not checked"
+                    : d.verified
+                      ? `verified${d.name ? ` · ${d.name}` : ""}`
+                      : "source not published"}
                 </span>
               </li>
             ))}
@@ -126,21 +128,26 @@ function ProfileView({ profile }: { profile: Profile }) {
 }
 
 async function Result({ address }: { address: string }) {
+  let profile: Profile;
   try {
-    return <ProfileView profile={await getProfile(address)} />;
+    profile = await getProfile(address);
   } catch (error) {
-    const message =
-      error instanceof InvalidAddressError || error instanceof EtherscanError
-        ? error.message
-        : error instanceof Error
-          ? error.message
-          : "Something went wrong.";
+    // Our own error types are written for the reader and safe to show. Anything
+    // else may carry internals such as the configured RPC URL, so it goes to
+    // the log and the page gets a generic line.
+    let message = "Something went wrong looking up this address.";
+    if (error instanceof InvalidAddressError || error instanceof EtherscanError) {
+      message = error.message;
+    } else {
+      console.error("Unexpected error building profile:", error);
+    }
     return (
       <p className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
         {message}
       </p>
     );
   }
+  return <ProfileView profile={profile} />;
 }
 
 export default async function Home({

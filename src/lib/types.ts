@@ -16,8 +16,12 @@ export interface Transaction {
 export interface Deployment {
   address: string;
   deployedAt: Date;
-  /** Whether the source is published on the block explorer. */
-  verified: boolean;
+  /**
+   * Whether the source is published on the block explorer. Null when the
+   * lookup was skipped because the address had more deployments than the
+   * per-profile verification cap (see VERIFICATION_LIMIT in etherscan.ts).
+   */
+  verified: boolean | null;
   /** Contract name from the verified source, when available. */
   name?: string;
 }

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { activeMonths, distinctCounterparties, outbound, summarise } from "@/lib/activity";
-import { findDeploymentTransactions, parseTransactions } from "@/lib/etherscan";
+import {
+  VERIFICATION_LIMIT,
+  findDeploymentTransactions,
+  parseTransactions,
+  splitByVerificationLimit,
+} from "@/lib/etherscan";
 
 import { OTHER, RAW_ETHERSCAN_PAGE, THIRD, WALLET, deploymentTx, ts, tx } from "./fixtures";
 
@@ -39,6 +44,38 @@ describe("findDeploymentTransactions", () => {
   it("ignores creations by other addresses", () => {
     const foreign = tx({ from: OTHER, to: "", contractAddress: "0xbbbb" });
     expect(findDeploymentTransactions([foreign], WALLET)).toHaveLength(0);
+  });
+});
+
+describe("splitByVerificationLimit", () => {
+  const many = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      deploymentTx(`0xaaaa${i}`, `2025-01-0${(i % 9) + 1}`),
+    );
+
+  it("checks everything when there are few deployments", () => {
+    const { check, skip } = splitByVerificationLimit(many(3));
+    expect(check).toHaveLength(3);
+    expect(skip).toHaveLength(0);
+  });
+
+  it("caps the lookups, so a prolific deployer cannot stall the request", () => {
+    const { check, skip } = splitByVerificationLimit(many(VERIFICATION_LIMIT + 10));
+    expect(check).toHaveLength(VERIFICATION_LIMIT);
+    expect(skip).toHaveLength(10);
+  });
+
+  it("keeps every deployment, checked or not", () => {
+    const creations = many(VERIFICATION_LIMIT + 10);
+    const { check, skip } = splitByVerificationLimit(creations);
+    expect(check.length + skip.length).toBe(creations.length);
+  });
+
+  it("spends the budget on the newest deployments", () => {
+    const old = deploymentTx("0xold", "2020-01-01");
+    const recent = deploymentTx("0xnew", "2025-06-01");
+    const { check } = splitByVerificationLimit([old, recent]);
+    expect(check[0].contractAddress).toBe("0xnew");
   });
 });
 

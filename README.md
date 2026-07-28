@@ -1,57 +1,73 @@
 # onchain-reputation
 
-Builds a structured developer profile from public Ethereum activity. Give it an
-address or an ENS name and it reports what the chain can actually evidence:
-contracts deployed, whether their source was published, how long and how
-consistently the address has been active — then scores it, shows every component
-of that score, and states plainly what the number cannot prove.
+Give it an Ethereum address or ENS name and it builds a developer profile from
+public chain data: contracts deployed, whether the source was published, how
+long and how consistently the address has been active. It scores that, shows how
+the score breaks down, and lists what it can't tell you.
 
-A learning project. I wrote it to get hands-on with on-chain data rather than to
-pass judgement on anybody.
+A learning project. I built it to spend some time with on-chain data, not to
+rate anybody.
 
-## Why it looks like this
+## The score
 
-Reputation scoring is easy to do badly. The tempting version produces one
-confident number from opaque weights, and nobody — least of all the person being
-scored — can tell whether it means anything. So two rules shaped the design:
-
-**Every score comes apart.** Each signal is normalised by a documented curve and
-combined with a fixed, visible weight. The API and the UI both return each
-component's raw value, its normalised value, its weight and its contribution.
-A score you cannot interrogate is worse than no score.
-
-**The limits are output, not footnotes.** The profile returns caveats alongside
-the score: no deployments found, activity concentrated on a handful of
-counterparties (the shape of a bot), dormant for years, too little history to
-judge, explorer results truncated. And always: an address is not a person — it
-proves control of a key, not authorship.
-
-## Signals and weights
-
-| Signal | Weight | Full marks at | Why |
+| Signal | Weight | Full marks at | Notes |
 |---|---|---|---|
-| Contracts deployed | 30% | 10 | Clearest evidence someone ships, not just transacts |
-| Deployments with published source | 20% | — | Publishing source is deliberate; proxy for work meant to be used |
-| Months with activity | 20% | 36 | Sustained presence, much harder to fake than a transaction count |
+| Contracts deployed | 30% | 10 | Best evidence on chain that someone ships, not just transacts |
+| Deployments with published source | 20% | — | Publishing source takes deliberate effort |
+| Months with activity | 20% | 36 | Sustained presence, harder to fake than a transaction count |
 | Account age | 15% | 5 years | Longevity |
-| Distinct counterparties | 10% | 100 | Breadth; a wallet with one counterparty looks automated |
-| Transactions sent | 5% | 500 | Weighted lightly — the easiest signal to inflate |
+| Distinct counterparties | 10% | 100 | A wallet that only ever talks to one contract looks automated |
+| Transactions sent | 5% | 500 | Weighted lightly, since it's the easiest number here to inflate |
 
-Counts are scaled logarithmically and capped, so a handful of enormous wallets
-cannot flatten everyone else into the bottom of the range. A signal that cannot
-be evaluated (the verified-source ratio for an address that has deployed
-nothing) is skipped and its weight redistributed, rather than scored as zero.
+Counts are scaled logarithmically and capped, so a few enormous wallets don't
+flatten everyone else into the bottom of the range.
+
+A signal that can't be evaluated is skipped and its weight spread across the
+others instead of being scored as zero. The verified-source ratio for an address
+that never deployed anything is the obvious case.
+
+The verified-source share only counts contracts that were actually checked. Past
+the verification cap a deployment is marked unknown instead of unverified, since
+"we didn't look" isn't the same as "they didn't publish". The profile says when
+that happened.
+
+Every component comes back with its raw value, normalised value, weight and
+contribution, from both the API and the UI. So do the caveats: no deployments
+found, activity concentrated on very few counterparties, dormant for years, too
+little history to judge, truncated results, verification only sampled. Plus the
+standing one, that an address proves control of a key and nothing about who
+holds it.
 
 ## Stack
 
 TypeScript, Next.js (App Router, server components), viem, Vitest.
 
-The Etherscan v2 API supplies transaction history and source verification; a
-JSON-RPC node via viem handles ENS in both directions. Both run server-side
-only, so the API key never reaches a browser. Requests are serialised through a
-spacing gate to stay inside the free tier's rate limit — checking a wallet with
-twenty deployments means twenty verification lookups — and responses are cached
-in-process.
+Etherscan v2 supplies transaction history and source verification. A JSON-RPC
+node via viem handles ENS in both directions. Both run server-side, so the API
+key stays out of the browser.
+
+### Rate limiting
+
+Free Etherscan keys cap out around 3 requests a second, and a wallet with twenty
+deployments needs twenty verification lookups, so requests go through a spacing
+gate rather than firing in parallel. The default gap is 400ms; set
+`ETHERSCAN_MIN_SPACING_MS` to change it. Responses are cached, oldest evicted
+first.
+
+Spacing on its own isn't enough. The ceiling varies by key, and a page can be
+requested twice before the first render finishes, so a throttled response is
+retried with exponential backoff. Each backoff also pushes the shared gate out,
+which slows queued requests down together instead of letting them pile into the
+same limit.
+
+One thing that cost me an afternoon: the gate and the cache have to live on
+`globalThis`, not at module scope. Next.js gives each bundling layer its own copy
+of a module, so the page and the API route end up with separate gates, each
+politely spacing its own requests while together blowing the limit. The symptom
+is a correct-looking 400ms gap still collecting 3/sec refusals.
+
+Even then it's only per-process. One long-lived server means one gate in front
+of the key. On serverless each instance gets its own, so the key sees the total.
 
 ## Setup
 
@@ -62,11 +78,11 @@ npm run dev                    # http://localhost:3000
 ```
 
 ```bash
-npm test                       # 33 tests, no network
+npm test                       # 51 tests, no network
 npm run build
 ```
 
-There is also a JSON endpoint:
+There's a JSON endpoint too:
 
 ```
 GET /api/profile?address=vitalik.eth
@@ -74,29 +90,27 @@ GET /api/profile?address=vitalik.eth
 
 ## Tests
 
-The tests never touch the network. Fixtures are built so the right answer is
-known by construction — a captured Etherscan payload pins the parsing to the
-real response format, and the counting rules are checked against hand-built
-histories. That means they run offline in about a second and cannot fail because
-an API is slow, throttled, or has quietly changed shape.
+Nothing hits the network. Fixtures are built so the expected answer is known up
+front, and a captured Etherscan payload keeps the parser pinned to the real
+response format. They run in about a second and don't break when an API is slow
+or quietly changes shape.
 
-Worth reading if you want the design in one place: `src/lib/scoring.ts` holds
-the weights and the caveat rules, `src/lib/activity.ts` the counting decisions
-(why active *months* beat transaction counts, why inbound transfers don't age an
-account, why failed deployments don't count).
+If you want the design in one place, `src/lib/scoring.ts` has the weights and the
+caveat rules, and `src/lib/activity.ts` has the counting decisions: why active
+months beat transaction counts, why inbound transfers don't age an account, why
+failed deployments don't count.
 
-## Known limitations
+## Limitations
 
-- **Ethereum mainnet only.** One chain done properly rather than five done
-  loosely. The explorer client is already parameterised by chain id.
-- **Explorer page cap.** Etherscan returns at most 10,000 transactions per
-  request, so for very busy addresses the counts are a floor. The profile says
-  so when it happens rather than quietly under-reporting.
-- **Deployments via a factory are missed.** Only direct contract-creation
-  transactions are counted; contracts deployed by another contract on the
-  address's behalf do not appear as creations from that address.
-- **No sybil resistance.** Anyone willing to spend gas over a long enough period
-  can manufacture most of these signals. The weights make that more expensive,
-  not impossible.
-- **A score is not a judgement of quality.** It counts deployments; it does not
-  read the code in them.
+- Mainnet only. The explorer client takes a chain id, so other chains are mostly
+  a config change.
+- Etherscan returns at most 10,000 transactions per request, so counts for very
+  busy addresses are a floor. The profile says when it hit that.
+- Only the 25 most recent deployments get a source check. Each one is a separate
+  serialised call, and an address with hundreds of them would otherwise spend
+  minutes in the spacing gate. The rest are listed with unknown status.
+- Contracts deployed by a factory don't show up, since only direct
+  contract-creation transactions count.
+- No sybil resistance. Given enough time and gas most of these signals can be
+  manufactured. The weights make that more expensive, not impossible.
+- It counts deployments, it doesn't read them. Nothing here judges code quality.
