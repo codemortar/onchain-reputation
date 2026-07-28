@@ -42,3 +42,6 @@ next-env.d.ts
 
 # ...but the template must be committed so others can set up.
 !.env.example
+
+# claude code personal settings
+.claude/settings.local.json
